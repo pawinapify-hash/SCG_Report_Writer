@@ -20,7 +20,7 @@ SLIDES = [15, 16, 17]  # 1-indexed slide numbers
 
 EMU_PER_IN = 914400
 MAX_IMG_W = 512
-TAG_WORDS = {"Environmental", "Social", "Governance"}
+TAG_WORDS = {"Environmental", "Social", "Governance", "Competitiveness"}
 MARKER_WORDS = {"ลบโพสต์", "เสร็จเเล้วค่ะ", "เสร็จแล้วค่ะ"}
 ENG_RE = re.compile(
     r"Engagement:\s*([\d,]+)\s*Like:\s*([\d,]+)\s*Comment:\s*([\d,]+)\s*Share:\s*([\d,]+)"

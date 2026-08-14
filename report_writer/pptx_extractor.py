@@ -16,6 +16,7 @@ TAG_WORDS = {
     "Governance",
     "Operating Results",
     "Financial Stability",
+    "Competitiveness",
     "Business Competitiveness & Corporate",
     "Stock / Debenture",
     "Thought Leadership",
@@ -177,14 +178,34 @@ def _parse_json_array(raw):
     return None
 
 
+def _normalize_post_number(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        value = value.strip()
+        if re.fullmatch(r"[+-]?\d+", value):
+            return int(value)
+    return None
+
+
 def _request_descriptions(image_parts, prompt, api_key, model, base_url, temperature, max_tokens):
     content = [{"type": "text", "text": prompt}] + image_parts
     url = base_url.rstrip("/") + "/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": content}],
+        "max_completion_tokens": max_tokens,
+    }
+    if temperature is not None:
+        payload["temperature"] = temperature
     resp = requests.post(
         url,
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={"model": model, "messages": [{"role": "user", "content": content}],
-              "temperature": temperature, "max_tokens": max_tokens},
+        json=payload,
         timeout=300,
     )
     resp.raise_for_status()
@@ -231,7 +252,9 @@ def describe_images(posts, api_key, model, base_url, temperature=0.2, max_tokens
     result = {}
     if descriptions:
         for d in descriptions:
-            batch_idx = d.get("post")
+            if not isinstance(d, dict):
+                continue
+            batch_idx = _normalize_post_number(d.get("post"))
             if batch_idx is None:
                 continue
             i = batch_idx - 1

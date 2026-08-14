@@ -4,10 +4,11 @@ from pathlib import Path
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
 
 DEFAULTS = {
-    "model": "gpt-4o",
+    "model": "gpt-5.6-luna",
     "base_url": "https://api.openai.com/v1",
     "temperature": 0.2,
     "max_tokens": 4000,
+    "pricing_usd_per_million_tokens": {},
     "send_images": True,
     "image_slots": [],
     "pillars": ["ESG Branding", "Business Branding", "Employer Branding"],
