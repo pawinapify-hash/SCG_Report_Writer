@@ -192,16 +192,21 @@ def _normalize_post_number(value):
     return None
 
 
-def _request_descriptions(image_parts, prompt, api_key, model, base_url, temperature, max_tokens):
+def _request_descriptions(
+    image_parts,
+    prompt,
+    api_key,
+    model,
+    base_url,
+    max_completion_tokens,
+):
     content = [{"type": "text", "text": prompt}] + image_parts
     url = base_url.rstrip("/") + "/chat/completions"
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": content}],
-        "max_completion_tokens": max_tokens,
+        "max_completion_tokens": max_completion_tokens,
     }
-    if temperature is not None:
-        payload["temperature"] = temperature
     resp = requests.post(
         url,
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -212,7 +217,14 @@ def _request_descriptions(image_parts, prompt, api_key, model, base_url, tempera
     return resp.json()
 
 
-def describe_images(posts, api_key, model, base_url, temperature=0.2, max_tokens=4000, retries=2):
+def describe_images(
+    posts,
+    api_key,
+    model,
+    base_url,
+    max_completion_tokens=4000,
+    retries=2,
+):
     image_parts = []
     idx_map = []
     for i, p in enumerate(posts):
@@ -242,8 +254,14 @@ def describe_images(posts, api_key, model, base_url, temperature=0.2, max_tokens
         prompt = base_prompt
         if attempt > 0:
             prompt += "\n\nสำคัญมาก: ตอบกลับเป็น JSON ที่ถูกต้องเท่านั้น ห้ามมีข้อความอื่นนอก JSON"
-        data = _request_descriptions(image_parts, prompt, api_key, model, base_url,
-                                     temperature, max_tokens)
+        data = _request_descriptions(
+            image_parts,
+            prompt,
+            api_key,
+            model,
+            base_url,
+            max_completion_tokens,
+        )
         raw = data["choices"][0]["message"]["content"]
         descriptions = _parse_json_array(raw)
         if descriptions is not None:

@@ -99,17 +99,15 @@ def build_key_thematic_messages(pillar, brand, ces_rows, posts, instruction=""):
 
 
 def chat_text(messages, api_key, model="gpt-5.6-luna", base_url="https://api.openai.com/v1",
-              temperature=0.2, max_tokens=4000):
+              max_completion_tokens=4000):
     url = base_url.rstrip("/") + "/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
         "model": model,
         "messages": messages,
-        "max_completion_tokens": max_tokens,
+        "max_completion_tokens": max_completion_tokens,
         "stream": False,
     }
-    if temperature is not None:
-        payload["temperature"] = temperature
     resp = requests.post(url, headers=headers, json=payload, timeout=300)
     resp.raise_for_status()
     data = resp.json()

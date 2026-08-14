@@ -6,12 +6,13 @@
 
 รายงานฉบับจริงประกอบด้วยหลาย section (เช่น Key Thematic, CES Content, Key Point, Top PRI Content, PRE Key Point ฯลฯ) ซึ่งแต่ละ section ใช้ข้อมูลคนละชุดและมี prompt การวิเคราะห์ต่างกัน โปรเจกต์นี้ถูกออกแบบให้ **ขับเคลื่อนด้วย config** — ประกาศทุก section, pillar, และ prompt ไว้ใน `config.json` แล้วโค้ดกลางจะทำหน้าที่ดึงข้อมูล + เรียก AI ตามนั้น
 
-ปัจจุบันส่วนที่ทำเสร็จแล้วคือ **CES Key Thematic** ส่วน section อื่น ๆ ยังรอการเติม prompt และข้อมูลที่ต้องใช้
+ปัจจุบันระบบรองรับการวิเคราะห์ **CES Key Thematic**, **Top PRI Content**, **Overview CES** และ **PRE Overview**
 
 ## สิ่งที่ผู้ใช้ต้องใส่ (Input)
 
 1. **ไฟล์ PPTX** — รายงานต้นแบบ (เช่น `SCG Monthly Report Automate Template July2.pptx`) ที่มี slide โพสต์ของแต่ละแบรนด์
-2. **ไฟล์ Excel** — ตารางคะแนน CES (เช่น `ebmo_July_07082026_summary_Facebook.xlsx`) ซึ่งมีคอลัมน์ Pillar, Brand, และคะแนน + Growth
+2. **ไฟล์ Excel คะแนน CES** — ตารางที่มีคอลัมน์ Pillar, Brand, คะแนน CES แต่ละเกณฑ์ และ Growth
+3. **ไฟล์ Excel คะแนน PRE** — ตารางที่มี 8 คอลัมน์: Pillar, Brand, PRI, PRI Growth, Standard Rate Card, Standard Rate Card Growth, PRE และ PRE Growth
 
 ## กระบวนการทำงาน
 
@@ -38,6 +39,44 @@
 
 ### ขั้นที่ 4 — นำผลไปประกอบเป็นรายงาน
 - ผลลัพธ์ของทุก section จะถูกนำไปแทนที่ในเทมเพลต เพื่อประกอบเป็นรายงานฉบับสมบูรณ์ (อยู่ระหว่างพัฒนา)
+
+## ข้อมูลประกอบการวิเคราะห์แต่ละส่วน
+
+ระบบแยกข้อมูลด้วย **Pillar** และ **Brand** ก่อนส่งให้ OpenAI เสมอ เพื่อป้องกันข้อมูลต่าง Pillar หรือข้อมูลของแบรนด์อื่นปะปนกัน การกด `Generate All Analysis` หนึ่งครั้งจะประมวลผลตามลำดับ: Key Thematic → Top PRI Content → Overview CES → PRE Overview
+
+### 1. CES Key Thematic
+
+สร้างผลลัพธ์แยกตาม Pillar และ Brand รวมสูงสุด 9 ผลลัพธ์ โดยใช้ข้อมูลดังนี้:
+
+- โพสต์ `TOP POST` เฉพาะแบรนด์ที่กำลังวิเคราะห์ใน Pillar นั้น ได้แก่ caption, tag, engagement, like, comment, share และคำอธิบายภาพจาก AI
+- คะแนนของ SCG, PTT และ CP ใน Pillar เดียวกัน เพื่อใช้เปรียบเทียบ ได้แก่ CES Score, Competitive Score, Efficiency Score, Sentiment (Influencer & Publisher), Sentiment (Consumer) และ Growth ของทุกเกณฑ์
+
+### 2. Top PRI Content
+
+สร้างผลลัพธ์แยกตาม Pillar และ Brand รวมสูงสุด 9 ผลลัพธ์ โดยใช้ข้อมูลดังนี้:
+
+- โพสต์ `TOP PRI` เฉพาะแบรนด์ที่กำลังวิเคราะห์ใน Pillar นั้น ได้แก่ caption, tag, publisher, PRI, PRE, engagement และคำอธิบายภาพจาก AI
+- ข้อมูลสรุปของ SCG, PTT และ CP ใน Pillar เดียวกัน ได้แก่ PRI, PRI Growth, Standard Rate Card, Standard Rate Card Growth, PRE และ PRE Growth
+
+### 3. Overview CES
+
+สร้างผลลัพธ์แยกตาม Pillar รวมสูงสุด 3 ผลลัพธ์ แต่ละผลลัพธ์มี 3 ย่อหน้า เรียง SCG → PTT → CP โดยใช้ข้อมูลดังนี้:
+
+- คะแนน CES และ Growth ทุกเกณฑ์ของทั้งสามแบรนด์ใน Pillar เดียวกัน
+- คำตอบ CES Key Thematic ที่สร้างสำเร็จแล้วของ SCG, PTT และ CP ใน Pillar นั้น
+- อันดับ CES และเครื่องหมาย ⭐ ซึ่งระบบคำนวณก่อนส่งข้อมูลให้ OpenAI
+
+Overview CES ไม่ได้รับโพสต์ดิบโดยตรง แต่ใช้คำตอบ Key Thematic เป็นข้อมูลสรุปอ้างอิง หาก Key Thematic หรือ CES Score ไม่ครบทั้งสามแบรนด์ ระบบจะไม่เรียก OpenAI สำหรับ Pillar นั้นและจะแสดงสาเหตุ
+
+### 4. PRE Overview
+
+สร้างผลลัพธ์แยกตาม Pillar รวมสูงสุด 3 ผลลัพธ์ แต่ละผลลัพธ์เรียง SCG → PTT → CP โดยใช้ข้อมูลดังนี้:
+
+- PRI และ PRI Growth ของทั้งสามแบรนด์ใน Pillar เดียวกัน โดยระบบแปลงเป็นหน่วย M และใช้ทศนิยมไม่เกินหนึ่งตำแหน่งก่อนส่ง
+- คำตอบ Top PRI Content ที่สร้างสำเร็จแล้วของ SCG, PTT และ CP ใน Pillar นั้น
+- สถานะว่าแบรนด์ใดมี PRI สูงสุดในกลุ่ม โดยไม่มีการใส่เครื่องหมายดาว
+
+PRE Overview ไม่ได้รับโพสต์ดิบโดยตรง แต่ใช้คำตอบ Top PRI Content เป็นข้อมูลสรุปอ้างอิง หาก Top PRI Content หรือ PRI/PRI Growth ไม่ครบทั้งสามแบรนด์ ระบบจะไม่เรียก OpenAI สำหรับ Pillar นั้นและจะแสดงสาเหตุ
 
 ## Expected Output
 

@@ -33,14 +33,13 @@ def build_messages(prompt, csv_text, images):
 
 
 def chat(messages, api_key, model="gpt-5.6-luna", base_url="https://api.openai.com/v1",
-         temperature=0.2, max_tokens=4000):
+         max_completion_tokens=4000):
     url = base_url.rstrip("/") + "/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
         "model": model,
         "messages": messages,
-        "temperature": temperature,
-        "max_completion_tokens": max_tokens,
+        "max_completion_tokens": max_completion_tokens,
         "stream": False,
     }
     resp = requests.post(url, headers=headers, json=payload, timeout=180)
