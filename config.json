@@ -1,0 +1,91 @@
+{
+  "model": "gpt-4o",
+  "base_url": "https://api.openai.com/v1",
+  "temperature": 0.2,
+  "max_tokens": 4000,
+  "send_images": true,
+  "image_slots": [],
+  "pillars": ["ESG Branding", "Business Branding", "Employer Branding"],
+  "sections": [
+    {
+      "name": "CES Overall vs CES Enterprise (Monthly)",
+      "pages": [24],
+      "images": [],
+      "excel_filter": {},
+      "prompt": ""
+    },
+    {
+      "name": "CES Overview (Enterprise)",
+      "pages": [26],
+      "images": [],
+      "excel_filter": {},
+      "prompt": ""
+    },
+    {
+      "name": "PRE Overview",
+      "pages": [31, 32],
+      "images": [],
+      "excel_filter": {},
+      "prompt": ""
+    },
+    {
+      "name": "CES Key Thematic (Enterprise)",
+      "pages": [39, 59, 80],
+      "pillars": [
+        { "name": "ESG Branding", "page": 39 },
+        { "name": "Business Branding", "page": 59 },
+        { "name": "Employer Branding", "page": 80 }
+      ],
+      "images": [],
+      "excel_filter": {},
+      "prompt": "คุณเป็นนักวิเคราะห์กลยุทธ์การสื่อสารแบรนด์อาวุโส เขียนบทวิเคราะห์ \"Key Thematic\" เป็นภาษาไทย\n\n## บริบท (กรอบ CES)\nCES วัดประสิทธิภาพการสื่อสารบนช่องทางของแบรนด์เอง คะแนน 0-100\n- Competitive = สัดส่วนโพสต์ที่ผ่านเกณฑ์ P90 เทียบกับคู่แข่ง (สูง = สร้างโพสต์ดีได้มากกว่าคู่แข่ง)\n- Efficiency = สัดส่วนโพสต์ที่ผ่าน P90 เทียบกับโพสต์ทั้งหมดของแบรนด์เอง (สูง = โพสต์ส่วนใหญ่ได้ engagement ดี)\n- \"โพสต์ที่ผ่าน P90\" = คอนเทนต์ Top 10% ที่สร้าง Engagement สูงสุดในตลาด\n- Growth = การเปลี่ยนแปลงเทียบกับเดือนก่อน (บวก = ดีขึ้น, ลบ = แย่ลง)\n\nหมายเหตุ: ข้อมูลเป็นของแบรนด์และ Pillar ที่ระบุในหัวข้อข้อมูลเท่านั้น (Owned Channel) อย่านำแบรนด์อื่นหรือ Pillar อื่นมาปน\n\n## ข้อมูลที่คุณจะได้รับ\n1. CES Score ของแบรนด์และ Pillar ที่ระบุในหัวข้อ พร้อม Growth\n2. โพสต์ของแบรนด์และ Pillar นั้น (caption, tag, engagement, คำบรรยายภาพ)\n\n## สิ่งที่ควรกล่าวถึง (ตามความเหมาะสมของข้อมูล ไม่จำเป็นต้องเรียงลำดับหรือครบทุกข้อ)\n- แนวทางการสื่อสารของแบรนด์ใน Pillar นี้: อธิบายเป็นเนื้อหาเชิงคุณภาพเป็นหลัก ว่าเดือนนี้แบรนด์พูดถึงเรื่องอะไรบ้าง มีธีม/หัวข้อหลักอะไร ใช้โทนหรือรูปแบบคอนเทนต์แบบไหน (เช่น กิจกรรมพนักงาน วันสำคัญด้านสิ่งแวดล้อม ให้ความรู้/ไลฟ์สไตล์) โดยยกตัวอย่างหัวข้อโพสต์ประกอบ\n- ความสัมพันธ์ระหว่างคะแนนกับแนวทางการสื่อสาร โดยเน้น Competitive และ Efficiency: อ้างอิงตัวเลขเพียงพอให้เห็นความเชื่อมโยง แต่อย่าเน้นการบรรยายตัวเลขเป็นหลัก\n- จุดน่าสนใจ เช่น คะแนนหรือ Growth เปลี่ยนแปลงมาก (±15 ขึ้นไป) การเป็น Top Brand ในเกณฑ์ใดเกณฑ์หนึ่ง หรือความขัดแย้งระหว่างคะแนน (เช่น Competitive ต่ำแต่ Efficiency สูง)\n\n## ข้อกำหนด\n- ให้ความสำคัญกับการอธิบายแนวทางการสื่อสาร (แบรนด์พูดเรื่องอะไร อย่างไร) มากกว่าการอธิบายตัวเลขเชิงปริมาณ\n- เน้นวิเคราะห์ Competitive และ Efficiency เป็นหลัก ส่วน Sentiment กล่าวถึงเพียงเสริมบริบท\n- อ้างอิงจากข้อมูลที่ให้เท่านั้น อย่าสร้างตัวเลขหรือข้อเท็จจริงที่ไม่มีในข้อมูล\n- ระบุชื่อแบรนด์และ Pillar ที่วิเคราะห์\n- ใช้โทนเป็นทางการ กระชับ เขียนเป็นภาษาไทย\n- ความยาวผลลัพธ์รวมไม่เกิน 450 ตัวอักษร"    },
+    {
+      "name": "CES Content (Enterprise)",
+      "pages": [40, 60, 81],
+      "pillars": [
+        { "name": "ESG Branding", "page": 40 },
+        { "name": "Business Branding", "page": 60 },
+        { "name": "Employer Branding", "page": 81 }
+      ],
+      "images": [],
+      "excel_filter": {},
+      "prompt": ""
+    },
+    {
+      "name": "CES Key Point (Enterprise)",
+      "pages": [47, 68, 88],
+      "pillars": [
+        { "name": "ESG Branding", "page": 47 },
+        { "name": "Business Branding", "page": 68 },
+        { "name": "Employer Branding", "page": 88 }
+      ],
+      "images": [],
+      "excel_filter": {},
+      "prompt": ""
+    },
+    {
+      "name": "Top PRI Content",
+      "pages": [50, 71, 91],
+      "pillars": [
+        { "name": "ESG Branding", "page": 50 },
+        { "name": "Business Branding", "page": 71 },
+        { "name": "Employer Branding", "page": 91 }
+      ],
+      "images": [],
+      "excel_filter": {},
+      "prompt": ""
+    },
+    {
+      "name": "PRE Key Point",
+      "pages": [54, 75, 95],
+      "pillars": [
+        { "name": "ESG Branding", "page": 54 },
+        { "name": "Business Branding", "page": 75 },
+        { "name": "Employer Branding", "page": 95 }
+      ],
+      "images": [],
+      "excel_filter": {},
+      "prompt": ""
+    }
+  ]
+}
