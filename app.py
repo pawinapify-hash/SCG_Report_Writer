@@ -259,39 +259,13 @@ def section_instruction(section_name):
     return ""
 
 
-instruction = st.text_area(
-    "Key Thematic instruction prompt (editable)",
-    value=section_instruction("CES Key Thematic (Enterprise)"),
-    key="kt_instruction",
-    height=300,
-)
-
-top_pri_instruction = st.text_area(
-    "Top PRI Content instruction prompt (editable)",
-    value=section_instruction("Top PRI Content"),
-    key="top_pri_instruction",
-    height=300,
-)
-
-overview_ces_instruction = st.text_area(
-    "Overview CES instruction prompt (editable)",
-    value=section_instruction("CES Overview (Enterprise)"),
-    key="overview_ces_instruction",
-    height=300,
-)
-
-overview_pre_instruction = st.text_area(
-    "PRE Overview instruction prompt (editable)",
-    value=section_instruction("PRE Overview"),
-    key="overview_pre_instruction",
-    height=300,
-)
-
 all_results = st.session_state.get("results", [])
 ces_results = [result for result in all_results if result.get("kind") == "CES"]
-pre_results = [r for r in st.session_state.get("results", []) if r.get("kind") == "PRE"]
+pre_results = [result for result in all_results if result.get("kind") == "PRE"]
 has_pre_data = pre_df is not None or st.session_state.get("pre_df") is not None
 has_ces_data = ces_df is not None or st.session_state.get("ces_df") is not None
+ces_df_now = ces_df if ces_df is not None else st.session_state.get("ces_df")
+pre_df_now = pre_df if pre_df is not None else st.session_state.get("pre_df")
 
 ces_posts_by_combo = {}
 for result in ces_results:
@@ -315,230 +289,300 @@ top_pri_combos = [
     if (pillar, brand) in pre_posts_by_combo
 ]
 
-analysis_ready = (
-    api_key != ""
-    and has_ces_data
-    and has_pre_data
-    and bool(key_thematic_combos)
-    and bool(top_pri_combos)
-)
+def request_analysis(messages):
+    try:
+        output, usage = chat_text(
+            messages,
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            max_completion_tokens=max_completion_tokens,
+        )
+        return output, usage, None
+    except Exception as e:
+        return None, None, str(e)
 
-if st.button(
-    "Generate All Analysis",
-    type="primary",
-    disabled=not analysis_ready,
-):
-    if not api_key:
-        st.error("Set OPENAI_API_KEY in .env")
-    else:
-        ces_df_now = ces_df if ces_df is not None else st.session_state.get("ces_df")
-        pre_df_now = pre_df if pre_df is not None else st.session_state.get("pre_df")
-        total_usage = empty_usage()
-        analyses = []
-        top_pri_analyses = []
-        overview_ces_analyses = []
-        overview_pre_analyses = []
-        total_combos = len(key_thematic_combos) + len(top_pri_combos) + (2 * len(pillars))
-        done = 0
-        progress = st.progress(0.0, text="Generating Key Thematic...")
 
-        for pillar, brand in key_thematic_combos:
-            ces_rows = {
-                comparison_brand: ces_row(ces_df_now, pillar, comparison_brand)
-                for comparison_brand in BRANDS
-            }
-            messages = build_key_thematic_messages(
+def add_analysis_usage(section_usage):
+    total = dict(st.session_state.get("analysis_usage", empty_usage()))
+    for key in total:
+        value = section_usage.get(key)
+        if isinstance(value, int):
+            total[key] = total.get(key, 0) + value
+    st.session_state["analysis_usage"] = total
+    st.session_state["analysis_usage_model"] = model
+
+
+def generate_key_thematic(instruction_prompt):
+    section_usage = empty_usage()
+    section_results = []
+    progress = st.progress(0.0, text="Generating Key Thematic...")
+    total = len(key_thematic_combos)
+    for done, (pillar, brand) in enumerate(key_thematic_combos, 1):
+        ces_rows = {
+            comparison_brand: ces_row(ces_df_now, pillar, comparison_brand)
+            for comparison_brand in BRANDS
+        }
+        messages = build_key_thematic_messages(
+            pillar,
+            brand,
+            ces_rows,
+            ces_posts_by_combo[(pillar, brand)],
+            instruction=instruction_prompt,
+        )
+        output, usage, error = request_analysis(messages)
+        section_results.append({
+            "section": "CES Key Thematic",
+            "pillar": pillar,
+            "brand": brand,
+            "title": build_analysis_title("CES", pillar, brand, "Key Thematic"),
+            "output": output,
+            "error": error,
+            "messages": messages,
+        })
+        if usage:
+            add_usage(section_usage, usage)
+        progress.progress(done / total, text=f"Key Thematic: {pillar} / {brand}")
+    progress.empty()
+    return section_results, section_usage
+
+
+def generate_top_pri(instruction_prompt):
+    section_usage = empty_usage()
+    section_results = []
+    progress = st.progress(0.0, text="Generating Top PRI Content...")
+    total = len(top_pri_combos)
+    for done, (pillar, brand) in enumerate(top_pri_combos, 1):
+        pre_rows = {
+            comparison_brand: pre_row(pre_df_now, pillar, comparison_brand)
+            for comparison_brand in BRANDS
+        }
+        messages = build_top_pri_messages(
+            pillar,
+            brand,
+            pre_rows,
+            pre_posts_by_combo[(pillar, brand)],
+            instruction=instruction_prompt,
+        )
+        output, usage, error = request_analysis(messages)
+        section_results.append({
+            "section": "Top PRI Content",
+            "pillar": pillar,
+            "brand": brand,
+            "title": build_analysis_title("PRE", pillar, brand, "Top PRI Content"),
+            "output": output,
+            "error": error,
+            "messages": messages,
+        })
+        if usage:
+            add_usage(section_usage, usage)
+        progress.progress(done / total, text=f"Top PRI Content: {pillar} / {brand}")
+    progress.empty()
+    return section_results, section_usage
+
+
+def key_thematic_outputs(section_results):
+    return {
+        (analysis["pillar"], analysis["brand"]): analysis.get("output")
+        for analysis in section_results
+        if not analysis.get("error") and analysis.get("output")
+    }
+
+
+def top_pri_outputs(section_results):
+    return {
+        (analysis["pillar"], analysis["brand"]): analysis.get("output")
+        for analysis in section_results
+        if not analysis.get("error") and analysis.get("output")
+    }
+
+
+def can_generate_overview_ces(section_results):
+    if ces_df_now is None:
+        return False
+    outputs = key_thematic_outputs(section_results)
+    for pillar in pillars:
+        ces_rows = {brand: ces_row(ces_df_now, pillar, brand) for brand in BRANDS}
+        pillar_outputs = {brand: outputs.get((pillar, brand)) for brand in BRANDS}
+        if overview_ces_validation_error(ces_rows, pillar_outputs) is None:
+            return True
+    return False
+
+
+def can_generate_overview_pre(section_results):
+    if pre_df_now is None:
+        return False
+    outputs = top_pri_outputs(section_results)
+    for pillar in pillars:
+        pre_rows = {brand: pre_row(pre_df_now, pillar, brand) for brand in BRANDS}
+        pillar_outputs = {brand: outputs.get((pillar, brand)) for brand in BRANDS}
+        if overview_pre_validation_error(pre_rows, pillar_outputs) is None:
+            return True
+    return False
+
+
+def generate_overview_ces(source_results, instruction_prompt):
+    outputs = key_thematic_outputs(source_results)
+    section_usage = empty_usage()
+    section_results = []
+    progress = st.progress(0.0, text="Generating Overview CES...")
+    for done, pillar in enumerate(pillars, 1):
+        ces_rows = {brand: ces_row(ces_df_now, pillar, brand) for brand in BRANDS}
+        pillar_outputs = {brand: outputs.get((pillar, brand)) for brand in BRANDS}
+        error = overview_ces_validation_error(ces_rows, pillar_outputs)
+        messages = []
+        output = None
+        usage = None
+        if error is None:
+            messages = build_overview_ces_messages(
                 pillar,
-                brand,
                 ces_rows,
-                ces_posts_by_combo[(pillar, brand)],
-                instruction=instruction,
+                pillar_outputs,
+                instruction=instruction_prompt,
             )
-            try:
-                output, usage = chat_text(
-                    messages,
-                    api_key=api_key,
-                    model=model,
-                    base_url=base_url,
-                    max_completion_tokens=max_completion_tokens,
-                )
-                error = None
-            except Exception as e:
-                output, usage, error = None, None, str(e)
+            output, usage, error = request_analysis(messages)
+        section_results.append({
+            "section": "CES Overview",
+            "pillar": pillar,
+            "brand": None,
+            "title": build_analysis_title("CES", pillar, None, "Overview"),
+            "output": output,
+            "error": error,
+            "messages": messages,
+        })
+        if usage:
+            add_usage(section_usage, usage)
+        progress.progress(done / len(pillars), text=f"Overview CES: {pillar}")
+    progress.empty()
+    return section_results, section_usage
 
-            analyses.append({
-                "section": "CES Key Thematic",
-                "pillar": pillar,
-                "brand": brand,
-                "title": build_analysis_title("CES", pillar, brand, "Key Thematic"),
-                "output": output,
-                "error": error,
-                "messages": messages,
-            })
-            if usage:
-                add_usage(total_usage, usage)
-            done += 1
-            progress.progress(
-                done / total_combos,
-                text=f"Key Thematic: {pillar} / {brand}",
-            )
 
-        for pillar, brand in top_pri_combos:
-            pre_rows = {
-                comparison_brand: pre_row(pre_df_now, pillar, comparison_brand)
-                for comparison_brand in BRANDS
-            }
-            messages = build_top_pri_messages(
+def generate_overview_pre(source_results, instruction_prompt):
+    outputs = top_pri_outputs(source_results)
+    section_usage = empty_usage()
+    section_results = []
+    progress = st.progress(0.0, text="Generating PRE Overview...")
+    for done, pillar in enumerate(pillars, 1):
+        pre_rows = {brand: pre_row(pre_df_now, pillar, brand) for brand in BRANDS}
+        pillar_outputs = {brand: outputs.get((pillar, brand)) for brand in BRANDS}
+        error = overview_pre_validation_error(pre_rows, pillar_outputs)
+        messages = []
+        output = None
+        usage = None
+        if error is None:
+            messages = build_overview_pre_messages(
                 pillar,
-                brand,
                 pre_rows,
-                pre_posts_by_combo[(pillar, brand)],
-                instruction=top_pri_instruction,
+                pillar_outputs,
+                instruction=instruction_prompt,
             )
-            try:
-                output, usage = chat_text(
-                    messages,
-                    api_key=api_key,
-                    model=model,
-                    base_url=base_url,
-                    max_completion_tokens=max_completion_tokens,
-                )
-                error = None
-            except Exception as e:
-                output, usage, error = None, None, str(e)
+            output, usage, error = request_analysis(messages)
+        section_results.append({
+            "section": "PRE Overview",
+            "pillar": pillar,
+            "brand": None,
+            "title": build_analysis_title("PRE", pillar, None, "Overview"),
+            "output": output,
+            "error": error,
+            "messages": messages,
+        })
+        if usage:
+            add_usage(section_usage, usage)
+        progress.progress(done / len(pillars), text=f"PRE Overview: {pillar}")
+    progress.empty()
+    return section_results, section_usage
 
-            top_pri_analyses.append({
-                "section": "Top PRI Content",
-                "pillar": pillar,
-                "brand": brand,
-                "title": build_analysis_title("PRE", pillar, brand, "Top PRI Content"),
-                "output": output,
-                "error": error,
-                "messages": messages,
-            })
-            if usage:
-                add_usage(total_usage, usage)
-            done += 1
-            progress.progress(
-                done / total_combos,
-                text=f"Top PRI Content: {pillar} / {brand}",
-            )
 
-        key_thematic_outputs = {
-            (analysis["pillar"], analysis["brand"]): analysis.get("output")
-            for analysis in analyses
-            if not analysis.get("error") and analysis.get("output")
-        }
-        for pillar in pillars:
-            ces_rows = {
-                brand: ces_row(ces_df_now, pillar, brand)
-                for brand in BRANDS
-            }
-            pillar_key_thematics = {
-                brand: key_thematic_outputs.get((pillar, brand))
-                for brand in BRANDS
-            }
-            error = overview_ces_validation_error(ces_rows, pillar_key_thematics)
-            messages = []
-            output = None
-            usage = None
+key_ready = api_key != "" and has_ces_data and bool(key_thematic_combos)
+top_pri_ready = api_key != "" and has_pre_data and bool(top_pri_combos)
 
-            if error is None:
-                messages = build_overview_ces_messages(
-                    pillar,
-                    ces_rows,
-                    pillar_key_thematics,
-                    instruction=overview_ces_instruction,
-                )
-                try:
-                    output, usage = chat_text(
-                        messages,
-                        api_key=api_key,
-                        model=model,
-                        base_url=base_url,
-                        max_completion_tokens=max_completion_tokens,
-                    )
-                except Exception as e:
-                    error = str(e)
+instruction = st.text_area(
+    "Key Thematic instruction prompt (editable)",
+    value=section_instruction("CES Key Thematic (Enterprise)"),
+    key="kt_instruction",
+    height=300,
+)
+if st.button("Analyze Key Thematic", disabled=not key_ready):
+    analyses, section_usage = generate_key_thematic(instruction)
+    st.session_state["analyses"] = analyses
+    st.session_state["overview_ces_analyses"] = []
+    add_analysis_usage(section_usage)
 
-            overview_ces_analyses.append({
-                "section": "CES Overview",
-                "pillar": pillar,
-                "brand": None,
-                "title": build_analysis_title("CES", pillar, None, "Overview"),
-                "output": output,
-                "error": error,
-                "messages": messages,
-            })
-            if usage:
-                add_usage(total_usage, usage)
-            done += 1
-            progress.progress(
-                done / total_combos,
-                text=f"Overview CES: {pillar}",
-            )
+top_pri_instruction = st.text_area(
+    "Top PRI Content instruction prompt (editable)",
+    value=section_instruction("Top PRI Content"),
+    key="top_pri_instruction",
+    height=300,
+)
+if st.button("Analyze Top PRI Content", disabled=not top_pri_ready):
+    top_pri_analyses, section_usage = generate_top_pri(top_pri_instruction)
+    st.session_state["top_pri_analyses"] = top_pri_analyses
+    st.session_state["overview_pre_analyses"] = []
+    add_analysis_usage(section_usage)
 
-        top_pri_outputs = {
-            (analysis["pillar"], analysis["brand"]): analysis.get("output")
-            for analysis in top_pri_analyses
-            if not analysis.get("error") and analysis.get("output")
-        }
-        for pillar in pillars:
-            pre_rows = {
-                brand: pre_row(pre_df_now, pillar, brand)
-                for brand in BRANDS
-            }
-            pillar_top_pri_outputs = {
-                brand: top_pri_outputs.get((pillar, brand))
-                for brand in BRANDS
-            }
-            error = overview_pre_validation_error(pre_rows, pillar_top_pri_outputs)
-            messages = []
-            output = None
-            usage = None
+current_key_thematics = st.session_state.get("analyses", [])
+overview_ces_instruction = st.text_area(
+    "Overview CES instruction prompt (editable)",
+    value=section_instruction("CES Overview (Enterprise)"),
+    key="overview_ces_instruction",
+    height=300,
+)
+if st.button(
+    "Analyze Overview CES",
+    disabled=(api_key == "" or not can_generate_overview_ces(current_key_thematics)),
+):
+    overview_ces_analyses, section_usage = generate_overview_ces(
+        current_key_thematics,
+        overview_ces_instruction,
+    )
+    st.session_state["overview_ces_analyses"] = overview_ces_analyses
+    add_analysis_usage(section_usage)
 
-            if error is None:
-                messages = build_overview_pre_messages(
-                    pillar,
-                    pre_rows,
-                    pillar_top_pri_outputs,
-                    instruction=overview_pre_instruction,
-                )
-                try:
-                    output, usage = chat_text(
-                        messages,
-                        api_key=api_key,
-                        model=model,
-                        base_url=base_url,
-                        max_completion_tokens=max_completion_tokens,
-                    )
-                except Exception as e:
-                    error = str(e)
+current_top_pri = st.session_state.get("top_pri_analyses", [])
+overview_pre_instruction = st.text_area(
+    "PRE Overview instruction prompt (editable)",
+    value=section_instruction("PRE Overview"),
+    key="overview_pre_instruction",
+    height=300,
+)
+if st.button(
+    "Analyze PRE Overview",
+    disabled=(api_key == "" or not can_generate_overview_pre(current_top_pri)),
+):
+    overview_pre_analyses, section_usage = generate_overview_pre(
+        current_top_pri,
+        overview_pre_instruction,
+    )
+    st.session_state["overview_pre_analyses"] = overview_pre_analyses
+    add_analysis_usage(section_usage)
 
-            overview_pre_analyses.append({
-                "section": "PRE Overview",
-                "pillar": pillar,
-                "brand": None,
-                "title": build_analysis_title("PRE", pillar, None, "Overview"),
-                "output": output,
-                "error": error,
-                "messages": messages,
-            })
-            if usage:
-                add_usage(total_usage, usage)
-            done += 1
-            progress.progress(
-                done / total_combos,
-                text=f"PRE Overview: {pillar}",
-            )
+analysis_ready = key_ready and top_pri_ready
+if st.button("Generate All Analysis", type="primary", disabled=not analysis_ready):
+    total_usage = empty_usage()
+    analyses, usage = generate_key_thematic(instruction)
+    for key in total_usage:
+        total_usage[key] += usage.get(key, 0)
+    top_pri_analyses, usage = generate_top_pri(top_pri_instruction)
+    for key in total_usage:
+        total_usage[key] += usage.get(key, 0)
+    overview_ces_analyses, usage = generate_overview_ces(
+        analyses,
+        overview_ces_instruction,
+    )
+    for key in total_usage:
+        total_usage[key] += usage.get(key, 0)
+    overview_pre_analyses, usage = generate_overview_pre(
+        top_pri_analyses,
+        overview_pre_instruction,
+    )
+    for key in total_usage:
+        total_usage[key] += usage.get(key, 0)
 
-        progress.empty()
-        st.session_state["analyses"] = analyses
-        st.session_state["top_pri_analyses"] = top_pri_analyses
-        st.session_state["overview_ces_analyses"] = overview_ces_analyses
-        st.session_state["overview_pre_analyses"] = overview_pre_analyses
-        st.session_state["analysis_usage"] = total_usage
-        st.session_state["analysis_usage_model"] = model
+    st.session_state["analyses"] = analyses
+    st.session_state["top_pri_analyses"] = top_pri_analyses
+    st.session_state["overview_ces_analyses"] = overview_ces_analyses
+    st.session_state["overview_pre_analyses"] = overview_pre_analyses
+    add_analysis_usage(total_usage)
 
 st.subheader("Analysis results")
 

@@ -2,7 +2,6 @@ import unittest
 
 from report_writer.overview_pre import (
     build_overview_pre_messages,
-    calculate_pri_comparison,
     format_millions,
     overview_pre_validation_error,
 )
@@ -20,18 +19,7 @@ class OverviewPreTests(unittest.TestCase):
         self.assertEqual(format_millions(24_000_000, signed=True), "+24M")
         self.assertEqual(format_millions(-28_000_000, signed=True), "-28M")
 
-    def test_comparison_supports_tied_highest_without_stars(self):
-        comparison = calculate_pri_comparison({
-            "SCG": pre_row(98_000_000, 1),
-            "PTT": pre_row(98_000_000, 1),
-            "CP": pre_row(67_000_000, 1),
-        })
-
-        self.assertTrue(comparison["SCG"]["is_highest"])
-        self.assertTrue(comparison["PTT"]["is_highest"])
-        self.assertFalse(comparison["CP"]["is_highest"])
-
-    def test_message_uses_fixed_order_m_values_and_top_pri_outputs(self):
+    def test_message_sends_values_without_status_or_forced_opening(self):
         rows = {
             "SCG": pre_row(98_000_000, 24_000_000),
             "PTT": pre_row(55_000_000, 19_000_000),
@@ -49,12 +37,16 @@ class OverviewPreTests(unittest.TestCase):
         content = messages[1]["content"]
 
         self.assertEqual(messages[0]["content"], "PRE overview instruction")
-        self.assertLess(content.index("[SCG]"), content.index("[PTT]"))
-        self.assertLess(content.index("[PTT]"), content.index("[CP]"))
-        self.assertIn("มูลค่าสื่อเพิ่มขึ้น +24M (มูลค่ารวม 98M)", content)
-        self.assertIn("มูลค่าสื่อลดลง -28M (มูลค่ารวม 67M)", content)
+        self.assertLess(content.index("[ข้อมูลของ SCG]"), content.index("[ข้อมูลของ PTT]"))
+        self.assertLess(content.index("[ข้อมูลของ PTT]"), content.index("[ข้อมูลของ CP]"))
+        self.assertIn("PRI รวม: 98M", content)
+        self.assertIn("PRI Growth: +24M", content)
+        self.assertIn("PRI รวม: 67M", content)
+        self.assertIn("PRI Growth: -28M", content)
         self.assertIn("SCG Top PRI evidence", content)
-        self.assertNotIn("⭐", content)
+        self.assertNotIn("สถานะเปรียบเทียบ", content)
+        self.assertNotIn("ข้อความบังคับ", content)
+        self.assertNotIn("สูงสุดในกลุ่ม", content)
 
     def test_validation_reports_missing_values_and_top_pri(self):
         error = overview_pre_validation_error(
