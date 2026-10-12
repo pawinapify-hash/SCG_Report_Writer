@@ -1,5 +1,8 @@
 import io
 import os
+import random
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 import streamlit as st
@@ -21,6 +24,7 @@ from report_writer.overview_pre import (
 from report_writer.pptx_extractor import describe_images, extract_posts
 from report_writer.pre_data import load_pre_data, pre_row
 from report_writer.top_pri_content import build_top_pri_messages, group_top_pri_posts
+from report_writer.pri_mri import build_pri_mri_messages, load_top_pri_content_workbook, parse_sheet_context, prepare_pri_mri_rows
 from report_writer.usage_cost import add_usage, empty_usage, usage_summary
 
 load_dotenv(override=True)
@@ -30,9 +34,15 @@ st.title("Report Writer")
 
 config = load_config()
 pricing_by_model = config.get("pricing_usd_per_million_tokens", {})
-model = config.get("model", "gpt-5.6-luna")
+default_model = config.get("model", "gpt-5.6-luna")
+extract_model = config.get("extract_model", default_model)
+analysis_model = config.get("analysis_model", default_model)
 base_url = config.get("base_url", "https://api.openai.com/v1")
 max_completion_tokens = int(config.get("max_completion_tokens", 4000))
+analysis_parallel_enabled = bool(config.get("analysis_parallel_enabled", True))
+analysis_parallel_workers = max(1, int(config.get("analysis_parallel_workers", 3)))
+extract_parallel_enabled = bool(config.get("extract_parallel_enabled", True))
+extract_parallel_workers = max(1, int(config.get("extract_parallel_workers", 2)))
 
 api_key = os.getenv("OPENAI_API_KEY", "").strip()
 
@@ -81,6 +91,11 @@ def load_pre(file_bytes):
     return load_pre_data(file_bytes)
 
 
+@st.cache_data(show_spinner=False)
+def load_top_pri_content_sheets(file_bytes):
+    return load_top_pri_content_workbook(file_bytes)
+
+
 def pillar_of(title, pillars):
     for p in pillars:
         if p in title:
@@ -117,6 +132,13 @@ pre_excel_file = st.file_uploader(
     key="pre_excel_upload",
 )
 
+top_pri_content_file = st.file_uploader(
+    "Top PRI Content (for PRI MRI section only)",
+    type=["xlsx", "xls", "xlsm"],
+    key="top_pri_content_upload",
+)
+
+
 selected_slides = []
 titles = {}
 ces_df = None
@@ -150,6 +172,23 @@ if pre_excel_file is not None:
             st.dataframe(pre_df, use_container_width=True, height=280)
     except Exception as e:
         st.error(f"Could not read PRE Excel: {e}")
+if top_pri_content_file is not None:
+    try:
+        top_pri_content_bytes = top_pri_content_file.getvalue()
+        top_pri_content_sheets = load_top_pri_content_sheets(top_pri_content_bytes)
+        sheet_names = list(top_pri_content_sheets.keys())
+        scg_sheet_names = [sheet_name for sheet_name in sheet_names if "SCG" in str(sheet_name)]
+        st.session_state["pri_mri_top_pri_content_sheets"] = top_pri_content_sheets
+        st.caption(
+            f"Top PRI Content loaded ({len(sheet_names)} sheets, SCG sheets: {len(scg_sheet_names)}) — used only for PRI MRI section"
+        )
+        with st.expander("Top PRI Content sheets (for PRI MRI)"):
+            st.write(pd.DataFrame({"sheet_name": sheet_names, "used_for_pri_mri": ["SCG" in str(sheet_name) for sheet_name in sheet_names]}))
+    except Exception as e:
+        st.session_state.pop("pri_mri_top_pri_content_sheets", None)
+        st.error(f"Could not read Top PRI Content Excel: {e}")
+else:
+    st.session_state.pop("pri_mri_top_pri_content_sheets", None)
 
 st.header("2. Extract & describe")
 
@@ -168,39 +207,66 @@ if st.button("Run", type="primary", disabled=(api_key == "" or pptx_file is None
         results = []
         progress = st.progress(0.0, text="Processing slides...")
         total_usage = empty_usage()
-        done = 0
         total_slides = len(selected_slides)
+        pptx_bytes = pptx_file.getvalue()
 
+        jobs = []
+        index = 0
         for kind, pillar in ordered_keys:
             for slide_no in sorted(groups[(kind, pillar)]):
-                posts = extract_slide(pptx_file.getvalue(), slide_no)
-                desc_map, usage = describe_images(
-                    posts, api_key=api_key, model=model, base_url=base_url,
-                    max_completion_tokens=max_completion_tokens,
-                )
+                jobs.append((index, kind, pillar, slide_no))
+                index += 1
 
-                for j, p in enumerate(posts):
-                    p["image_description"] = desc_map.get(j)
+        def extract_describe_job(job):
+            job_index, kind, pillar, slide_no = job
+            posts = extract_slide(pptx_bytes, slide_no)
+            desc_map, usage = describe_images(
+                posts,
+                api_key=api_key,
+                model=extract_model,
+                base_url=base_url,
+                max_completion_tokens=max_completion_tokens,
+            )
+            for post_index, post in enumerate(posts):
+                post["image_description"] = desc_map.get(post_index)
 
-                results.append({
-                    "kind": kind,
-                    "pillar": pillar,
-                    "group": group_label(kind, pillar),
-                    "brand": brand_of(titles[slide_no]),
-                    "slide": slide_no,
-                    "title": titles[slide_no],
-                    "posts": posts,
-                })
+            result = {
+                "kind": kind,
+                "pillar": pillar,
+                "group": group_label(kind, pillar),
+                "brand": brand_of(titles[slide_no]),
+                "slide": slide_no,
+                "title": titles[slide_no],
+                "posts": posts,
+            }
+            progress_text = f"{group_label(kind, pillar)}: slide {slide_no}"
+            return job_index, result, usage, progress_text
+
+        if extract_parallel_enabled and total_slides > 1:
+            max_workers = min(extract_parallel_workers, total_slides)
+            indexed_results = []
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [executor.submit(extract_describe_job, job) for job in jobs]
+                for done, future in enumerate(as_completed(futures), 1):
+                    indexed_results.append(future.result())
+                    progress.progress(done / total_slides, text=f"Processing slides... {done}/{total_slides}")
+
+            for _, result, usage, _ in sorted(indexed_results, key=lambda item: item[0]):
+                results.append(result)
                 if usage:
                     add_usage(total_usage, usage)
-
-                done += 1
-                progress.progress(done / total_slides, text=f"{group_label(kind, pillar)}: slide {slide_no}")
+        else:
+            for done, job in enumerate(jobs, 1):
+                _, result, usage, progress_text = extract_describe_job(job)
+                results.append(result)
+                if usage:
+                    add_usage(total_usage, usage)
+                progress.progress(done / total_slides, text=progress_text)
 
         progress.empty()
         st.session_state["results"] = results
         st.session_state["usage"] = total_usage
-        st.session_state["usage_model"] = model
+        st.session_state["usage_model"] = extract_model
         if ces_df is not None:
             st.session_state["ces_df"] = ces_df
         if pre_df is not None:
@@ -214,7 +280,7 @@ if not results:
 else:
     usage = st.session_state.get("usage", {})
     if usage:
-        usage_model = st.session_state.get("usage_model", model)
+        usage_model = st.session_state.get("usage_model", extract_model)
         st.caption(usage_summary(usage, usage_model, pricing_by_model))
 
     for r in results:
@@ -266,6 +332,8 @@ has_pre_data = pre_df is not None or st.session_state.get("pre_df") is not None
 has_ces_data = ces_df is not None or st.session_state.get("ces_df") is not None
 ces_df_now = ces_df if ces_df is not None else st.session_state.get("ces_df")
 pre_df_now = pre_df if pre_df is not None else st.session_state.get("pre_df")
+pri_mri_sheets_now = st.session_state.get("pri_mri_top_pri_content_sheets", {})
+pri_mri_sheet_names = [sheet_name for sheet_name in pri_mri_sheets_now.keys() if "SCG" in str(sheet_name)]
 
 ces_posts_by_combo = {}
 for result in ces_results:
@@ -289,20 +357,75 @@ top_pri_combos = [
     if (pillar, brand) in pre_posts_by_combo
 ]
 
-def request_analysis(messages):
-    try:
-        output, usage = chat_text(
-            messages,
-            api_key=api_key,
-            model=model,
-            base_url=base_url,
-            max_completion_tokens=max_completion_tokens,
-        )
-        return output, usage, None
-    except Exception as e:
-        return None, None, str(e)
+def _should_retry_analysis(error_text):
+    lowered = (error_text or "").lower()
+    retry_signals = (
+        "429",
+        "rate limit",
+        "timeout",
+        "timed out",
+        "temporarily",
+        "connection reset",
+        "500",
+        "502",
+        "503",
+        "504",
+    )
+    return any(signal in lowered for signal in retry_signals)
 
 
+def request_analysis(messages, max_attempts=3):
+    for attempt in range(1, max_attempts + 1):
+        try:
+            output, usage = chat_text(
+                messages,
+                api_key=api_key,
+                model=analysis_model,
+                base_url=base_url,
+                max_completion_tokens=max_completion_tokens,
+            )
+            return output, usage, None
+        except Exception as e:
+            error_text = str(e)
+            if attempt >= max_attempts or not _should_retry_analysis(error_text):
+                return None, None, error_text
+            sleep_seconds = min(1.5 * (2 ** (attempt - 1)), 6.0) + random.uniform(0.0, 0.2)
+            time.sleep(sleep_seconds)
+
+
+def _run_analysis_jobs(jobs, worker, progress_prefix, progress_label):
+    section_usage = empty_usage()
+    section_results = []
+    if not jobs:
+        return section_results, section_usage
+
+    progress = st.progress(0.0, text=progress_label)
+    total = len(jobs)
+
+    if analysis_parallel_enabled and total > 1:
+        indexed_results = []
+        max_workers = min(analysis_parallel_workers, total)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(worker, job) for job in jobs]
+            for done, future in enumerate(as_completed(futures), 1):
+                index, result, usage = future.result()
+                indexed_results.append((index, result, usage))
+                progress.progress(done / total, text=f"{progress_prefix}: {done}/{total}")
+
+        for _, result, usage in sorted(indexed_results, key=lambda item: item[0]):
+            section_results.append(result)
+            if usage:
+                add_usage(section_usage, usage)
+    else:
+        for done, job in enumerate(jobs, 1):
+            _, result, usage = worker(job)
+            section_results.append(result)
+            if usage:
+                add_usage(section_usage, usage)
+            progress.progress(done / total, text=f"{progress_prefix}: {result['pillar']} / {result.get('brand') or 'Overview'}")
+
+    progress.empty()
+    return section_results, section_usage
 def add_analysis_usage(section_usage):
     total = dict(st.session_state.get("analysis_usage", empty_usage()))
     for key in total:
@@ -310,15 +433,14 @@ def add_analysis_usage(section_usage):
         if isinstance(value, int):
             total[key] = total.get(key, 0) + value
     st.session_state["analysis_usage"] = total
-    st.session_state["analysis_usage_model"] = model
+    st.session_state["analysis_usage_model"] = analysis_model
 
 
 def generate_key_thematic(instruction_prompt):
-    section_usage = empty_usage()
-    section_results = []
-    progress = st.progress(0.0, text="Generating Key Thematic...")
-    total = len(key_thematic_combos)
-    for done, (pillar, brand) in enumerate(key_thematic_combos, 1):
+    jobs = list(enumerate(key_thematic_combos))
+
+    def worker(job):
+        index, (pillar, brand) = job
         ces_rows = {
             comparison_brand: ces_row(ces_df_now, pillar, comparison_brand)
             for comparison_brand in BRANDS
@@ -331,7 +453,7 @@ def generate_key_thematic(instruction_prompt):
             instruction=instruction_prompt,
         )
         output, usage, error = request_analysis(messages)
-        section_results.append({
+        result = {
             "section": "CES Key Thematic",
             "pillar": pillar,
             "brand": brand,
@@ -339,20 +461,20 @@ def generate_key_thematic(instruction_prompt):
             "output": output,
             "error": error,
             "messages": messages,
-        })
-        if usage:
-            add_usage(section_usage, usage)
-        progress.progress(done / total, text=f"Key Thematic: {pillar} / {brand}")
-    progress.empty()
-    return section_results, section_usage
+        }
+        return index, result, usage
 
-
+    return _run_analysis_jobs(
+        jobs,
+        worker,
+        progress_prefix="Key Thematic",
+        progress_label="Generating Key Thematic...",
+    )
 def generate_top_pri(instruction_prompt):
-    section_usage = empty_usage()
-    section_results = []
-    progress = st.progress(0.0, text="Generating Top PRI Content...")
-    total = len(top_pri_combos)
-    for done, (pillar, brand) in enumerate(top_pri_combos, 1):
+    jobs = list(enumerate(top_pri_combos))
+
+    def worker(job):
+        index, (pillar, brand) = job
         pre_rows = {
             comparison_brand: pre_row(pre_df_now, pillar, comparison_brand)
             for comparison_brand in BRANDS
@@ -365,7 +487,7 @@ def generate_top_pri(instruction_prompt):
             instruction=instruction_prompt,
         )
         output, usage, error = request_analysis(messages)
-        section_results.append({
+        result = {
             "section": "Top PRI Content",
             "pillar": pillar,
             "brand": brand,
@@ -373,14 +495,15 @@ def generate_top_pri(instruction_prompt):
             "output": output,
             "error": error,
             "messages": messages,
-        })
-        if usage:
-            add_usage(section_usage, usage)
-        progress.progress(done / total, text=f"Top PRI Content: {pillar} / {brand}")
-    progress.empty()
-    return section_results, section_usage
+        }
+        return index, result, usage
 
-
+    return _run_analysis_jobs(
+        jobs,
+        worker,
+        progress_prefix="Top PRI Content",
+        progress_label="Generating Top PRI Content...",
+    )
 def key_thematic_outputs(section_results):
     return {
         (analysis["pillar"], analysis["brand"]): analysis.get("output")
@@ -493,8 +616,47 @@ def generate_overview_pre(source_results, instruction_prompt):
     return section_results, section_usage
 
 
+def generate_pri_mri(instruction_prompt):
+    jobs = list(enumerate(pri_mri_sheet_names))
+
+    def worker(job):
+        index, sheet_name = job
+        sheet_frame = pri_mri_sheets_now.get(sheet_name)
+        prepared_rows, error = prepare_pri_mri_rows(sheet_name, sheet_frame)
+        brand, pillar = parse_sheet_context(sheet_name)
+
+        messages = []
+        output = None
+        usage = None
+        if error is None:
+            messages = build_pri_mri_messages(
+                sheet_name,
+                prepared_rows,
+                instruction=instruction_prompt,
+            )
+            output, usage, error = request_analysis(messages)
+
+        result = {
+            "section": "PRI MRI",
+            "pillar": pillar or sheet_name,
+            "brand": brand,
+            "sheet": sheet_name,
+            "title": build_analysis_title("PRE", pillar or sheet_name, brand, "PRI MRI"),
+            "output": output,
+            "error": error,
+            "messages": messages,
+        }
+        return index, result, usage
+
+    return _run_analysis_jobs(
+        jobs,
+        worker,
+        progress_prefix="PRI MRI",
+        progress_label="Generating PRI MRI...",
+    )
 key_ready = api_key != "" and has_ces_data and bool(key_thematic_combos)
 top_pri_ready = api_key != "" and has_pre_data and bool(top_pri_combos)
+pri_mri_ready = api_key != "" and bool(pri_mri_sheet_names)
 
 instruction = st.text_area(
     "Key Thematic instruction prompt (editable)",
@@ -556,6 +718,17 @@ if st.button(
     st.session_state["overview_pre_analyses"] = overview_pre_analyses
     add_analysis_usage(section_usage)
 
+pri_mri_instruction = st.text_area(
+    "PRI MRI instruction prompt (editable)",
+    value=section_instruction("PRI MRI"),
+    key="pri_mri_instruction",
+    height=300,
+)
+if st.button("Analyze PRI MRI", disabled=not pri_mri_ready):
+    pri_mri_analyses, section_usage = generate_pri_mri(pri_mri_instruction)
+    st.session_state["pri_mri_analyses"] = pri_mri_analyses
+    add_analysis_usage(section_usage)
+
 analysis_ready = key_ready and top_pri_ready
 if st.button("Generate All Analysis", type="primary", disabled=not analysis_ready):
     total_usage = empty_usage()
@@ -578,10 +751,17 @@ if st.button("Generate All Analysis", type="primary", disabled=not analysis_read
     for key in total_usage:
         total_usage[key] += usage.get(key, 0)
 
+    pri_mri_analyses = []
+    if pri_mri_ready:
+        pri_mri_analyses, usage = generate_pri_mri(pri_mri_instruction)
+        for key in total_usage:
+            total_usage[key] += usage.get(key, 0)
+
     st.session_state["analyses"] = analyses
     st.session_state["top_pri_analyses"] = top_pri_analyses
     st.session_state["overview_ces_analyses"] = overview_ces_analyses
     st.session_state["overview_pre_analyses"] = overview_pre_analyses
+    st.session_state["pri_mri_analyses"] = pri_mri_analyses
     add_analysis_usage(total_usage)
 
 st.subheader("Analysis results")
@@ -590,14 +770,15 @@ analyses = st.session_state.get("analyses", [])
 top_pri_analyses = st.session_state.get("top_pri_analyses", [])
 overview_ces_analyses = st.session_state.get("overview_ces_analyses", [])
 overview_pre_analyses = st.session_state.get("overview_pre_analyses", [])
-combined_analyses = analyses + top_pri_analyses + overview_ces_analyses + overview_pre_analyses
+pri_mri_analyses = st.session_state.get("pri_mri_analyses", [])
+combined_analyses = analyses + top_pri_analyses + overview_ces_analyses + overview_pre_analyses + pri_mri_analyses
 
 if not combined_analyses:
     st.info("Analysis results will appear here after generation.")
 else:
     analysis_usage = st.session_state.get("analysis_usage", {})
     if analysis_usage:
-        analysis_usage_model = st.session_state.get("analysis_usage_model", model)
+        analysis_usage_model = st.session_state.get("analysis_usage_model", analysis_model)
         st.caption(usage_summary(analysis_usage, analysis_usage_model, pricing_by_model))
 
     exportable_analyses = [
@@ -618,6 +799,7 @@ else:
         ("Top PRI Content", top_pri_analyses),
         ("Overview CES", overview_ces_analyses),
         ("PRE Overview", overview_pre_analyses),
+        ("PRI MRI", pri_mri_analyses),
     ):
         st.markdown(f"**{section_name}**")
         if not section_results:
@@ -636,3 +818,6 @@ else:
                         st.code(analysis["output"], language=None, wrap_lines=True)
                     with tab_data:
                         st.code(analysis["messages"][1]["content"], language="text")
+
+
+
